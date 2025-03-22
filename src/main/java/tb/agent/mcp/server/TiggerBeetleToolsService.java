@@ -5,9 +5,13 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.tigerbeetle.AccountBalanceBatch;
 import com.tigerbeetle.AccountBatch;
+import com.tigerbeetle.AccountFilter;
 import com.tigerbeetle.AccountFlags;
 import com.tigerbeetle.CreateAccountResultBatch;
+import com.tigerbeetle.CreateTransferResultBatch;
+import com.tigerbeetle.TransferBatch;
 import com.tigerbeetle.Client;
 
 @Service
@@ -23,34 +27,14 @@ public class TiggerBeetleToolsService {
         this.client = client;
     }
 
-    @Tool(description = TOOL_CREATE_ACCOUNT_DESCRIPTION)
-    /**
-    * Crea una cuenta en TigerBeetle usando los valores proporcionados.
-    *
-    * @param idHigh                             Unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.  
-    * @param idLow                              Unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.  
-    * @param userData128High                    an optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.  
-    * @param userData128Low                     an optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.  
-    * @param userData64                         Optional 64‑bit secondary identifier; use 0 if the user does not assigned a value.  
-    * @param userData32                         Optional 32‑bit secondary identifier; use 0 if the user does not assigned a value.  
-    * @param ledger                             Ledger identifier (32‑bit unsigned) grouping accounts that can transact with each other; must be non‑zero.  
-    * @param code                               User‑defined account category code (16‑bit unsigned); must be non‑zero.  
-    * @param linked                             If true, links this account creation to the next in the same batch so they succeed or fail together.
-    * @param debitsMustNotExceedCredits         If true, rejects any transfer that would cause the account’s debits (pending + posted) to exceed its posted credits.
-    * @param creditsMustNotExceedDebits         If true, rejects any transfer that would cause the account’s credits (pending + posted) to exceed its posted debits.
-    * @param history                            If true, retains the history of balance changes, enabling the get_account_balances operation for this account.
-    * @param imported                           If true, allows importing a historical account with a user‑defined timestamp instead of using the cluster clock.
-    * @param closed                             If true, prevents further transfers on the account (except voiding pending two‑phase transfers).
-    * @param timestamp                          Creation timestamp in nanoseconds since the UNIX epoch; must be 0 if the imported flag is not set.
-    * @return Returns the operation result or error as a json object.
-    */
+    @Tool(description = TiggerBeetleDocs.TOOL_CREATE_ACCOUNT_DESCRIPTION)
     public String createAccount(
-        @ToolParam(required = true, description = "Unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long idHigh,
-        @ToolParam(required = true, description = "Unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long idLow,
-        @ToolParam(description = "an optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.") Long userData128High,
-        @ToolParam(description = "an optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.") Long userData128Low,
-        @ToolParam(description = "Optional 64‑bit secondary identifier; use 0 if the user does not assigned a value.") Long userData64,
-        @ToolParam(description = "Optional 32‑bit secondary identifier; use 0 if the user does not assigned a value.") Integer userData32,
+        @ToolParam(required = true, description = "This is the high part of the unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long idHigh,
+        @ToolParam(required = true, description = "This is the low part of the unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long idLow,
+        @ToolParam(description = "This is the high part of the optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.") Long userData128High,
+        @ToolParam(description = "This is the low part of the optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.") Long userData128Low,
+        @ToolParam(description = "This is the optional 64‑bit secondary identifier; use 0 if the user does not assigned a value.") Long userData64,
+        @ToolParam(description = "This is the optional 32‑bit secondary identifier; use 0 if the user does not assigned a value.") Integer userData32,
         @ToolParam(required = true, description = "Ledger identifier (32‑bit unsigned) grouping accounts that can transact with each other; must be non‑zero.") Integer ledger,
         @ToolParam(required = true, description = "User‑defined account category code (16‑bit unsigned); must be non‑zero.") Integer code,
         @ToolParam(description = "If true, links this account creation to the next in the same batch so they succeed or fail together; use false if the user does not assigned a value.") Boolean linked,
@@ -69,7 +53,7 @@ public class TiggerBeetleToolsService {
         accounts.setUserData32(userData32 != null ? userData32 : 0);
         accounts.setLedger(ledger != null ? ledger : 0);
         accounts.setCode(code != null ? code : 0);
-        accounts.setFlags(calcFlags(linked != null && linked, debitsMustNotExceedCredits != null && debitsMustNotExceedCredits, creditsMustNotExceedDebits != null && creditsMustNotExceedDebits, history != null && history, imported != null && imported, closed != null && closed));
+        accounts.setFlags(calcAccountFlags(linked != null && linked, debitsMustNotExceedCredits != null && debitsMustNotExceedCredits, creditsMustNotExceedDebits != null && creditsMustNotExceedDebits, history != null && history, imported != null && imported, closed != null && closed));
         accounts.setTimestamp(timestamp != null ? timestamp : 0);
     
         CreateAccountResultBatch accountErrors = client.createAccounts(accounts);
@@ -101,7 +85,7 @@ public class TiggerBeetleToolsService {
      * @param closed                        If true, prevents further transfers on the account (except voiding pending two‑phase transfers).
      * @return                               An integer bitmask representing the combined AccountFlags.
      */
-    public static int calcFlags(
+    public static int calcAccountFlags(
             Boolean linked,
             Boolean debitsMustNotExceedCredits,
             Boolean creditsMustNotExceedDebits,
@@ -119,310 +103,133 @@ public class TiggerBeetleToolsService {
         return flags;
     }
 
-    private static final String TOOL_CREATE_ACCOUNT_DESCRIPTION = """
-        # Tool to create an account in TigerBeetle.
-        Creates an account in TigerBeetle using the following provided parameters:
-        - **idHigh**: Unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.  
-        - **idLow**: Unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.  
-        - **userData128High**: an optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.  
-        - **userData128Low**: an optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.  
-        - **userData64**: Optional 64‑bit secondary identifier; use 0 if the user does not assigned a value.  
-        - **userData32**: Optional 32‑bit secondary identifier; use 0 if the user does not assigned a value.  
-        - **ledger**: Ledger identifier (32‑bit unsigned) grouping accounts that can transact with each other; must be non‑zero.  
-        - **code**: User‑defined account category code (16‑bit unsigned); must be non‑zero.  
-        - **linked**: If true, links this account creation to the next in the same batch so they succeed or fail together.
-        - **debitsMustNotExceedCredits**: If true, rejects any transfer that would cause the account’s debits (pending + posted) to exceed its posted credits.
-        - **creditsMustNotExceedDebits**: If true, rejects any transfer that would cause the account’s credits (pending + posted) to exceed its posted debits.
-        - **history**: If true, retains the history of balance changes, enabling the get_account_balances operation for this account.
-        - **imported**: If true, allows importing a historical account with a user‑defined timestamp instead of using the cluster clock.
-        - **closed**: If true, prevents further transfers on the account (except voiding pending two‑phase transfers).
-        - **timestamp**: Creation timestamp in nanoseconds since the UNIX epoch; must be 0 if the imported flag is not set.
-        Returns the operation result or error as a json object including these two attributes:
-        - **success**: A boolean indicating whether the operation was successful.
-        - **value**: A string containing the result or error message.
-
-        # About TigerBeetle accounts
-        An `Account` is a record storing the cumulative effect of committed [transfers](./transfer.md).
-
-        ### Updates
-
-        Account fields _cannot be changed by the user_ after creation. However, debits and credits fields
-        are updated by TigerBeetle as transfers move money to and from an account.
-
-        ### Deletion
-
-        Accounts **cannot be deleted** after creation. This provides a strong guarantee for an audit trail
-        -- and the account record is only 128 bytes.
-
-        If an account is no longer in use, you may want to
-        [zero out its balance](../coding/recipes/close-account.md).
-
-        ### Guarantees
-
-        - Accounts are immutable. They are never modified once they are successfully created (excluding
-        balance fields, which are modified by transfers).
-        - There is at most one `Account` with a particular [`id`](#id).
-        - The sum of all accounts' [`debits_pending`](#debits_pending) equals the sum of all accounts'
-        [`credits_pending`](#credits_pending).
-        - The sum of all accounts' [`debits_posted`](#debits_posted) equals the sum of all accounts'
-        [`credits_posted`](#credits_posted).
-
-        ## Fields
-
-        ### `id`
-
-        This is a unique, client-defined identifier for the account.
-
-        Constraints:
-
-        - Type is 128-bit unsigned integer (16 bytes)
-        - Must not be zero or `2^128 - 1` (the highest 128-bit unsigned integer)
-        - Must not conflict with another account in the cluster
-
-        See the [`id` section in the data modeling doc](../coding/data-modeling.md#id) for more
-        recommendations on choosing an ID scheme.
-
-        Note that account IDs are unique for the cluster -- not per ledger. If you want to store a
-        relationship between accounts, such as indicating that multiple accounts on different ledgers belong
-        to the same user, you should store a user ID in one of the [`user_data`](#user_data_128) fields.
-
-        ### `debits_pending`
-
-        `debits_pending` counts debits reserved by pending transfers. When a pending transfer posts, voids,
-        or times out, the amount is removed from `debits_pending`.
-
-        Money in `debits_pending` is reserved — that is, it cannot be spent until the corresponding pending
-        transfer resolves.
-
-        Constraints:
-
-        - Type is 128-bit unsigned integer (16 bytes)
-        - Must be zero when the account is created
-
-        ### `debits_posted`
-
-        Amount of posted debits.
-
-        Constraints:
-
-        - Type is 128-bit unsigned integer (16 bytes)
-        - Must be zero when the account is created
-
-        ### `credits_pending`
-
-        `credits_pending` counts credits reserved by pending transfers. When a pending transfer posts,
-        voids, or times out, the amount is removed from `credits_pending`.
-
-        Money in `credits_pending` is reserved — that is, it cannot be spent until the corresponding pending
-        transfer resolves.
-
-        Constraints:
-
-        - Type is 128-bit unsigned integer (16 bytes)
-        - Must be zero when the account is created
-
-        ### `credits_posted`
-
-        Amount of posted credits.
-
-        Constraints:
-
-        - Type is 128-bit unsigned integer (16 bytes)
-        - Must be zero when the account is created
-
-        ### `user_data_128`
-
-        This is an optional 128-bit secondary identifier to link this account to an external entity or
-        event.
-
-        When set to zero, no secondary identifier will be associated with the account, therefore only
-        non-zero values can be used as [query filter](./query-filter.md).
-
-        As an example, you might use a
-        [ULID](../coding/data-modeling.md#tigerbeetle-time-based-identifiers-recommended) that ties together
-        a group of accounts.
-
-        For more information, see [Data Modeling](../coding/data-modeling.md#user_data).
-
-        Constraints:
-
-        - Type is 128-bit unsigned integer (16 bytes)
-
-        ### `user_data_64`
-
-        This is an optional 64-bit secondary identifier to link this account to an external entity or event.
-
-        When set to zero, no secondary identifier will be associated with the account, therefore only
-        non-zero values can be used as [query filter](./query-filter.md).
-
-        As an example, you might use this field store an external timestamp.
-
-        For more information, see [Data Modeling](../coding/data-modeling.md#user_data).
-
-        Constraints:
-
-        - Type is 64-bit unsigned integer (8 bytes)
-
-        ### `user_data_32`
-
-        This is an optional 32-bit secondary identifier to link this account to an external entity or event.
-
-        When set to zero, no secondary identifier will be associated with the account, therefore only
-        non-zero values can be used as [query filter](./query-filter.md).
-
-        As an example, you might use this field to store a timezone or locale.
-
-        For more information, see [Data Modeling](../coding/data-modeling.md#user_data).
-
-        Constraints:
-
-        - Type is 32-bit unsigned integer (4 bytes)
-
-        ### `reserved`
-
-        This space may be used for additional data in the future.
-
-        Constraints:
-
-        - Type is 4 bytes
-        - Must be zero
-
-        ### `ledger`
-
-        This is an identifier that partitions the sets of accounts that can transact with each other.
-
-        See [data modeling](../coding/data-modeling.md#ledgers) for more details about how to think about
-        setting up your ledgers.
-
-        Constraints:
-
-        - Type is 32-bit unsigned integer (4 bytes)
-        - Must not be zero
-
-        ### `code`
-
-        This is a user-defined enum denoting the category of the account.
-
-        As an example, you might use codes `1000`-`3340` to indicate asset accounts in general, where `1001`
-        is Bank Account and `1002` is Money Market Account and `2003` is Motor Vehicles and so on.
-
-        Constraints:
-
-        - Type is 16-bit unsigned integer (2 bytes)
-        - Must not be zero
-
-        ### `flags`
-
-        A bitfield that toggles additional behavior.
-
-        Constraints:
-
-        - Type is 16-bit unsigned integer (2 bytes)
-        - Some flags are mutually exclusive; see
-        [`flags_are_mutually_exclusive`](./requests/create_accounts.md#flags_are_mutually_exclusive).
-
-        #### `flags.linked`
-
-        This flag links the result of this account creation to the result of the next one in the request,
-        such that they will either succeed or fail together.
-
-        The last account in a chain of linked accounts does **not** have this flag set.
-
-        You can read more about [linked events](../coding/linked-events.md).
-
-        #### `flags.debits_must_not_exceed_credits`
-
-        When set, transfers will be rejected that would cause this account's debits to exceed credits.
-        Specifically when
-        `account.debits_pending + account.debits_posted + transfer.amount > account.credits_posted`.
-
-        This cannot be set when `credits_must_not_exceed_debits` is also set.
-
-        #### `flags.credits_must_not_exceed_debits`
-
-        When set, transfers will be rejected that would cause this account's credits to exceed debits.
-        Specifically when
-        `account.credits_pending + account.credits_posted + transfer.amount > account.debits_posted`.
-
-        This cannot be set when `debits_must_not_exceed_credits` is also set.
-
-        #### `flags.history`
-
-        When set, the account will retain the history of balances at each transfer.
-
-        Note that the [`get_account_balances`](./requests/get_account_balances.md) operation only works for
-        accounts with this flag set.
-
-        #### `flags.imported`
-
-        When set, allows importing historical `Account`s with their original [`timestamp`](#timestamp).
-
-        TigerBeetle will not use the [cluster clock](../coding/time.md) to assign the timestamp, allowing
-        the user to define it, expressing _when_ the account was effectively created by an external
-        event.
-
-        To maintain system invariants regarding auditability and traceability, some constraints are
-        necessary:
-
-        - It is not allowed to mix events with the `imported` flag set and _not_ set in the same batch.
-        The application must submit batches of imported events separately.
-
-        - User-defined timestamps must be **unique** and expressed as nanoseconds since the UNIX epoch.
-        No two objects can have the same timestamp, even different objects like an `Account` and a `Transfer` cannot share the same timestamp.
-
-        - User-defined timestamps must be a past date, never ahead of the cluster clock at the time the
-        request arrives.
-
-        - Timestamps must be strictly increasing.
-
-        Even user-defined timestamps that are required to be past dates need to be at least one
-        nanosecond ahead of the timestamp of the last account committed by the cluster.
-
-        Since the timestamp cannot regress, importing past events can be naturally restrictive without
-        coordination, as the last timestamp can be updated using the cluster clock during regular
-        cluster activity. Instead, it's recommended to import events only on a fresh cluster or
-        during a scheduled maintenance window.
-
-        It's recommended to submit the entire batch as a [linked chain](#flagslinked), ensuring that
-        if any account fails, none of them are committed, preserving the last timestamp unchanged.
-        This approach gives the application a chance to correct failed imported accounts, re-submitting
-        the batch again with the same user-defined timestamps.
-
-        #### `flags.closed`
-
-        When set, the account will reject further transfers,
-        except for [voiding two-phase transfers](transfer.md#modes) that are still pending.
-
-        - This flag can be set during the account creation.
-        - This flag can also be set by sending a [two-phase pending transfer](transfer.md#flagspending)
-        with the [`Transfer.flags.closing_debit`](transfer.md#flagsclosing_debit)
-        and/or [`Transfer.flags.closing_credit`](transfer.md#flagsclosing_credit) flags set.
-        - This flag can be _unset_ by [voiding](transfer.md#flagsvoid_pending_transfer) the two-phase
-        pending transfer that closed the account.
-
-        ### `timestamp`
-
-        This is the time the account was created, as nanoseconds since UNIX epoch.
-        You can read more about [Time in TigerBeetle](../coding/time.md).
-
-        Constraints:
-
-        - Type is 64-bit unsigned integer (8 bytes)
-        - Must be `0` when the `Account` is created with [`flags.imported`](#flagsimported) _not_ set
-
-        It is set by TigerBeetle to the moment the account arrives at the cluster.
-
-        - Must be greater than `0` and less than `2^63` when the `Account` is created with
-        [`flags.imported`](#flagsimported) set
-
-        ## Internals
-
-        If you're curious and want to learn more, you can find the source code for this struct in
-        [src/tigerbeetle.zig](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/tigerbeetle.zig).
-        Search for `const Account = extern struct {`.
-
-        You can find the source code for creating an account in
-        [src/state_machine.zig](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/state_machine.zig).
-        Search for `fn create_account(`.                
-        """;
+    @Tool(description = TiggerBeetleDocs.TOOL_TRANSFER_DESCRIPTION)
+    public String createTransfer(
+        @ToolParam(required = true, description = "This is the highest significant part of the unique transfer identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long idHigh,
+        @ToolParam(required = true, description = "This is the lowest significant part of the unique transfer identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long idLow,
+        @ToolParam(required = true, description = "This is the highest significant part of the debit account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long debitAccountIdHigh,
+        @ToolParam(required = true, description = "This is the lowest significant part of the debit account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long debitAccountIdLow,
+        @ToolParam(required = true, description = "This is the highest significant part of the credit account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long creditAccountIdHigh,
+        @ToolParam(required = true, description = "This is the lowest significant part of the credit account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long creditAccountIdLow,
+        @ToolParam(required = true, description = "This is the highest significant part of the ammount identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long amountHigh,
+        @ToolParam(required = true, description = "This is the lowest significant part of the ammount identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long amountLow,
+        @ToolParam(description = "an optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.") Long userData128High,
+        @ToolParam(description = "an optional 128‑bit secondary identifier as a long; use 0 if the user does not assigned a value.") Long userData128Low,
+        @ToolParam(description = "Optional 64‑bit secondary identifier; use 0 if the user does not assigned a value.") Long userData64,
+        @ToolParam(description = "Optional 32‑bit secondary identifier; use 0 if the user does not assigned a value.") Integer userData32,
+        @ToolParam(required = true, description = "Ledger identifier (32‑bit unsigned) grouping accounts that can transact with each other; must be non‑zero.") Integer ledger,
+        @ToolParam(required = true, description = "User‑defined account category code (16‑bit unsigned); must be non‑zero.") Integer code,
+        @ToolParam(description = "an optional timeout; use 0 if the user does not assigned a value.") Integer timeout,
+
+        @ToolParam(description = "If true, links this transfer with the next in the batch to succeed or fail together.") Boolean linked,
+        @ToolParam(description = "If true, marks this as a pending transfer reserving the funds until later posting or voiding.") Boolean pending,
+        @ToolParam(description = "If true, posts a previously pending transfer to finalize it.") Boolean postPendingTransfer,
+        @ToolParam(description = "If true, voids a previously pending transfer to cancel it.") Boolean voidPendingTransfer,
+        @ToolParam(description = "If true, debits up to the specified amount or less to avoid exceeding account credit limits.") Boolean balancingDebit,
+        @ToolParam(description = "If true, credits up to the specified amount or less to avoid exceeding account debit limits.") Boolean balancingCredit,
+        @ToolParam(description = "If true, marks the debit account as closed upon successful transfer; requires a pending transfer.") Boolean closingDebit,
+        @ToolParam(description = "If true, marks the credit account as closed upon successful transfer; requires a pending transfer.") Boolean closingCredit,
+        @ToolParam(description = "If true, allows importing a historical transfer with a custom timestamp; must be used in isolated batches.") Boolean imported
+        ) {
+            TransferBatch transfers = new TransferBatch(1);
+
+            transfers.add();
+            transfers.setId(idLow, idHigh);
+
+            transfers.setDebitAccountId(debitAccountIdLow, debitAccountIdHigh);
+            transfers.setCreditAccountId(creditAccountIdLow, creditAccountIdHigh);
+            transfers.setAmount(amountLow, amountHigh);
+            transfers.setUserData128(userData128Low, userData128High);
+            transfers.setUserData64(userData64);
+            transfers.setUserData32(userData32);
+            transfers.setTimeout(timeout);
+            transfers.setLedger(ledger);
+            transfers.setCode(code);
+            transfers.setFlags(calcTransferFlags(linked, pending, postPendingTransfer, voidPendingTransfer, balancingDebit, balancingCredit, closingDebit, closingCredit, imported));
+            
+            CreateTransferResultBatch transferErrors = client.createTransfers(transfers);
+
+            String result = JSON_ARRAY_START;
+        while (transferErrors.next()) {
+            result = result.equals(JSON_ARRAY_START)? "": result + ",";
+            switch (transferErrors.getResult()) {
+                case Exists:
+                    result += "{\"success\": false, \"value\": \"Batch transfer at " + transferErrors.getIndex() + " already exists.\"}";
+                    break;
+        
+                default:
+                    result += "{\"success\": false, \"value\": \"Batch transfer at " + transferErrors.getIndex() + " failed to create " + transferErrors.getResult() + ".\"}";
+                    break;
+            }
+        }
+        result = result.equals(JSON_ARRAY_START)? "{\"success\": true, \"value\": \"Transfer created successfully\"}": result + JSON_ARRAY_END;
+        return result;
     }
+
+    /**
+     * Computes a bitmask of transfer flags by OR‑ing together each flag enabled by the given boolean parameters.
+     *
+     * @param linked                        If true, links this transfer with the next in the batch to succeed or fail together.
+     * @param pending                       If true, marks this as a pending transfer reserving the funds until later posting or voiding.
+     * @param postPendingTransfer           If true, posts a previously pending transfer to finalize it.
+     * @param voidPendingTransfer           If true, voids a previously pending transfer to cancel it.
+     * @param balancingDebit                If true, debits up to the specified amount or less to avoid exceeding account credit limits.
+     * @param balancingCredit               If true, credits up to the specified amount or less to avoid exceeding account debit limits.
+     * @param closingDebit                  If true, marks the debit account as closed upon successful transfer; requires a pending transfer.
+     * @param closingCredit                 If true, marks the credit account as closed upon successful transfer; requires a pending transfer.
+     * @param imported                      If true, allows importing a historical transfer with a custom timestamp; must be used in isolated batches.
+     * @return                               An integer bitmask representing the combined transfer flags.
+     */
+    public static int calcTransferFlags(
+            Boolean linked,
+            Boolean pending,
+            Boolean postPendingTransfer,
+            Boolean voidPendingTransfer,
+            Boolean balancingDebit,
+            Boolean balancingCredit,
+            Boolean closingDebit,
+            Boolean closingCredit,
+            Boolean imported
+    ) {
+        int flags = 0;
+        if (linked) flags |= 1; // LINKED
+        if (pending) flags |= 2; // PENDING
+        if (postPendingTransfer) flags |= 4; // POST_PENDING_TRANSFER
+        if (voidPendingTransfer) flags |= 8; // VOID_PENDING_TRANSFER
+        if (balancingDebit) flags |= 16; // BALANCING_DEBIT
+        if (balancingCredit) flags |= 32; // BALANCING_CREDIT
+        if (closingDebit) flags |= 64; // CLOSING_DEBIT
+        if (closingCredit) flags |= 128; // CLOSING_CREDIT
+        if (imported) flags |= 256; // IMPORTED
+        return flags;
+    }
+
+    @Tool(description = TiggerBeetleDocs.TOOL_GET_ACCOUNT_BALANCES_DESCRIPTION)
+    public String getAccountBalances(
+        @ToolParam(required = true, description = "This is the high part of the unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long idHigh,
+        @ToolParam(required = true, description = "This is the low part of the unique account identifier as a long. Must not be 0 or 2^128‑1, and must be unique within the cluster.") Long idLow
+    ) {
+        AccountFilter filter = new AccountFilter();
+        filter.setAccountId(idLow, idHigh);
+        filter.setUserData128(0); // No filter by UserData.
+        filter.setUserData64(0);// No filter by UserData.
+        filter.setUserData32(0);// No filter by UserData.
+        filter.setCode(0); // No filter by Code.
+        filter.setTimestampMin(0); // No filter by Timestamp.
+        filter.setTimestampMax(0); // No filter by Timestamp.
+        filter.setLimit(10); // Limit to ten balances at most.
+        filter.setDebits(true); // Include transfer from the debit side.
+        filter.setCredits(true); // Include transfer from the credit side.
+        filter.setReversed(true); // Sort by timestamp in reverse-chronological order.
+        
+        AccountBalanceBatch account_balances = client.getAccountBalances(filter);
+        return String.format(
+            "{\"credits_pending\":%d,\"credits_posted\":%d,\"debits_pending\":%d,\"debits_posted\":%d}",
+            account_balances.getCreditsPending(),
+            account_balances.getCreditsPosted(),
+            account_balances.getDebitsPending(),
+            account_balances.getDebitsPosted()
+        );
+    }
+
+}
